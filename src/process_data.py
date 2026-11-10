@@ -9,7 +9,8 @@ def ajouter_flags(transactions):
 
     for transaction in transactions:
         copie = transaction.copy()
-        copie["flag_montant_eleve"] = transaction["montant"] >= Decimal("5000")        resultat.append(copie)
+        copie["flag_montant_eleve"] = transaction["montant"] > Decimal("5000")
+        resultat.append(copie)
 
     return resultat
 
