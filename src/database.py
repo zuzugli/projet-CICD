@@ -1,4 +1,5 @@
 import hashlib
+import os
 import time
 from pathlib import Path
 
@@ -16,11 +17,11 @@ from src.process_data import (
 def connecter(nom_base="transactions"):
     """Ouvre une connexion à PostgreSQL."""
     return psycopg.connect(
-        host="127.0.0.1",
-        port=5432,
+        host=os.getenv("PGHOST", "127.0.0.1"),
+        port=int(os.getenv("PGPORT", "5432")),
         dbname=nom_base,
-        user="pipeline",
-        password="pipeline_local",
+        user=os.getenv("PGUSER", "pipeline"),
+        password=os.getenv("PGPASSWORD", "pipeline_local"),
         connect_timeout=5,
     )
 
@@ -142,8 +143,9 @@ def inserer_avec_retry(
     nom_base="transactions",
     max_tentatives=3,
     delai=2,
+    contenu=None,
 ):
-    """Réessaie l'insertion locale après une erreur opérationnelle."""
+    """Réessaie l'insertion d'un fichier local ou d'un contenu en mémoire."""
     if max_tentatives < 1:
         raise ValueError("Il faut au moins une tentative.")
 
@@ -152,7 +154,14 @@ def inserer_avec_retry(
 
     for tentative in range(1, max_tentatives + 1):
         try:
-            return inserer_fichier(chemin, nom_base)
+            if contenu is None:
+                return inserer_fichier(chemin, nom_base)
+
+            return inserer_contenu_csv(
+                contenu=contenu,
+                nom_fichier=str(chemin),
+                nom_base=nom_base,
+            )
 
         except psycopg.OperationalError as erreur:
             print(

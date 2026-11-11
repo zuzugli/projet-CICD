@@ -2,7 +2,7 @@
 
 import argparse
 
-from src.database import inserer_contenu_csv
+from src.database import inserer_avec_retry
 from src.s3_storage import creer_client_s3, lister_csv, recuperer_csv
 
 
@@ -18,9 +18,9 @@ def traiter_depuis_s3(nom_base="transactions"):
     for cle in cles:
         contenu = recuperer_csv(cle, client)
 
-        nombre = inserer_contenu_csv(
+        nombre = inserer_avec_retry(
+            chemin=cle,
             contenu=contenu,
-            nom_fichier=cle,
             nom_base=nom_base,
         )
 

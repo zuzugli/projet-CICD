@@ -1,0 +1,9 @@
+{
+  "datetime_transaction": "2026-11-11 09:00:00",
+  "iban_origine": "ES9121000418450200051332",
+  "pays_source": "Espagne",
+  "banque_source": "Santander",
+  "iban_destinataire": "FR7630001007941234567890185",
+  "pays_destinataire": "France",
+  "montant": "6200.00"
+}

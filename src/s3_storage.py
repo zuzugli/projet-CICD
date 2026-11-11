@@ -1,6 +1,7 @@
 """Communication avec le stockage S3 local."""
 
 import time
+import os
 from pathlib import Path
 
 import boto3
@@ -16,7 +17,7 @@ from botocore.exceptions import (
 )
 
 
-BUCKET = "transactions-csv"
+BUCKET = os.getenv("S3_BUCKET", "transactions-csv")
 
 ERREURS_S3 = (
     ClientError,
@@ -33,9 +34,9 @@ def creer_client_s3():
     """Crée un client pour communiquer avec SeaweedFS."""
     return boto3.client(
         "s3",
-        endpoint_url="http://127.0.0.1:8333",
-        aws_access_key_id="pipeline",
-        aws_secret_access_key="pipeline_s3_local",
+        endpoint_url=os.getenv("S3_ENDPOINT_URL", "http://127.0.0.1:8333"),
+        aws_access_key_id=os.getenv("S3_ACCESS_KEY", "pipeline"),
+        aws_secret_access_key=os.getenv("S3_SECRET_KEY", "pipeline_s3_local"),
         region_name="us-east-1",
         config=Config(
             signature_version="s3v4",

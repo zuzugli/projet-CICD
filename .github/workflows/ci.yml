@@ -1,4 +1,4 @@
-name: CI - Tests pipeline data
+name: CI/CD - Tests et livraison Docker
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 jobs:
   tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -39,6 +39,14 @@ jobs:
         ports:
           - 8333:8333
 
+      ollama:
+        image: ollama/ollama:0.40.16
+        env:
+          OLLAMA_NUM_PARALLEL: "1"
+          OLLAMA_MAX_LOADED_MODELS: "1"
+        ports:
+          - 11434:11434
+
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v7
@@ -50,6 +58,16 @@ jobs:
 
       - name: Installer les dépendances
         run: python -m pip install -r requirements.txt
+
+      - name: Installer le moteur OCR réel
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-fra fonts-dejavu-core
+
+      - name: Préparer le petit modèle local réel
+        run: |
+          python -c "from src.slm import attendre_ollama; attendre_ollama()"
+          docker exec "${{ job.services.ollama.id }}" ollama pull qwen2.5:0.5b
 
       - name: Attendre le stockage S3
         run: |
@@ -77,3 +95,45 @@ jobs:
 
       - name: Exécuter tous les tests
         run: python -m pytest tests -v
+
+  livraison:
+    name: Livrer l'image Docker
+    needs: tests
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Récupérer le code testé
+        uses: actions/checkout@v7
+
+      - name: Définir le nom et les versions de l'image
+        shell: bash
+        run: |
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "VERSION=sha-${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      - name: Construire l'image et vérifier son démarrage
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "${IMAGE}:${VERSION}" \
+            --tag "${IMAGE}:latest" .
+          docker run --rm --network none "${IMAGE}:${VERSION}" python -m src.demo --help
+
+      - name: Se connecter au registre GitHub
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Publier la version validée
+        run: |
+          docker push "${IMAGE}:${VERSION}"
+          docker push "${IMAGE}:latest"
+          echo "### Image Docker livrée" >> "$GITHUB_STEP_SUMMARY"
+          echo "Version : ${IMAGE}:${VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Dernière livraison : ${IMAGE}:latest" >> "$GITHUB_STEP_SUMMARY"

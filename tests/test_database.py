@@ -8,29 +8,6 @@ from src.database import connecter, inserer_fichier
 from src.load_data import COLONNES_ATTENDUES
 
 
-@pytest.fixture
-def base_test():
-    """Prépare puis nettoie uniquement la base de tests."""
-    requete_nettoyage = """
-        TRUNCATE TABLE
-            transactions,
-            totaux_iban_origine,
-            totaux_banque_source,
-            totaux_iban_destinataire,
-            processed_files
-        RESTART IDENTITY;
-    """
-
-    with connecter("transactions_test") as connexion:
-        connexion.execute(requete_nettoyage)
-
-    try:
-        yield "transactions_test"
-    finally:
-        with connecter("transactions_test") as connexion:
-            connexion.execute(requete_nettoyage)
-
-
 def test_insertion_flags_totaux_et_doublons(base_test, tmp_path):
     fichier = tmp_path / "exemple.csv"
 
@@ -241,3 +218,56 @@ def test_parcours_s3_vers_postgresql(base_test, tmp_path):
             Key=fichier.name,
         )
         client.delete_bucket(Bucket=bucket_test)
+
+
+def test_retry_contenu_apres_confirmation_perdue(base_test):
+    from unittest.mock import patch
+
+    from src.database import inserer_avec_retry, inserer_contenu_csv
+
+    contenu = (
+        ",".join(COLONNES_ATTENDUES)
+        + "\n"
+        + "2026-01-02 09:00:00,"
+        + "ES9121000418450200051332,Espagne,Santander,"
+        + "FR7630001007941234567890185,France,100.00\n"
+    ).encode("utf-8")
+
+    def insertion_avec_confirmation_perdue(*args, **kwargs):
+        nombre = inserer_contenu_csv(*args, **kwargs)
+
+        if nombre > 0:
+            raise psycopg.OperationalError(
+                "Confirmation perdue après enregistrement"
+            )
+
+        return nombre
+
+    with patch(
+        "src.database.inserer_contenu_csv",
+        side_effect=insertion_avec_confirmation_perdue,
+    ) as insertion:
+        with patch("src.database.time.sleep") as attente:
+            resultat = inserer_avec_retry(
+                chemin="depuis_s3.csv",
+                contenu=contenu,
+                nom_base=base_test,
+                max_tentatives=3,
+                delai=2,
+            )
+
+    assert insertion.call_count == 2
+    attente.assert_called_once_with(2)
+    assert resultat == 0
+
+    with connecter(base_test) as connexion:
+        bilan = connexion.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM transactions),
+                (SELECT SUM(montant) FROM transactions),
+                (SELECT COUNT(*) FROM processed_files);
+            """
+        ).fetchone()
+
+    assert bilan == (1, Decimal("100.00"), 1)

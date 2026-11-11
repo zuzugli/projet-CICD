@@ -1,3 +1,4 @@
-psycopg[binary]
-pytest
-boto3
+psycopg[binary]==3.3.8
+pytest==9.2.0
+boto3==1.43.127
+Pillow==13.0.0
