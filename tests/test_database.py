@@ -145,3 +145,99 @@ def test_echec_insertion_annule_tout(base_test, tmp_path):
         ).fetchone()
 
     assert nombres == (0, 0, 0, 0, 0)
+
+
+def test_parcours_s3_vers_postgresql(base_test, tmp_path):
+    from uuid import uuid4
+
+    from src.database import inserer_contenu_csv
+    from src.s3_storage import (
+        creer_client_s3,
+        envoyer_csv,
+        recuperer_csv,
+    )
+
+    fichier = tmp_path / "transactions_s3.csv"
+
+    with fichier.open("w", newline="", encoding="utf-8") as sortie:
+        writer = csv.DictWriter(sortie, fieldnames=COLONNES_ATTENDUES)
+        writer.writeheader()
+
+        for montant in ("4999.99", "5000.00", "5000.01"):
+            writer.writerow({
+                "datetime_transaction": "2026-01-02 09:00:00",
+                "iban_origine": "ES9121000418450200051332",
+                "pays_source": "Espagne",
+                "banque_source": "Santander",
+                "iban_destinataire": "FR7630001007941234567890185",
+                "pays_destinataire": "France",
+                "montant": montant,
+            })
+
+    contenu_attendu = fichier.read_bytes()
+
+    client = creer_client_s3()
+    bucket_test = f"test-pipeline-{uuid4().hex}"
+    client.create_bucket(Bucket=bucket_test)
+
+    try:
+        cle = envoyer_csv(fichier, client, bucket=bucket_test)
+
+        # Supprime uniquement le fichier temporaire créé par ce test.
+        fichier.unlink()
+
+        contenu = recuperer_csv(cle, client, bucket=bucket_test)
+        assert contenu == contenu_attendu
+
+        assert inserer_contenu_csv(contenu, cle, base_test) == 3
+
+        # Même contenu sous un autre nom : aucun nouvel import.
+        assert inserer_contenu_csv(
+            contenu, "copie.csv", base_test
+        ) == 0
+
+        with connecter(base_test) as connexion:
+            lignes = connexion.execute(
+                """
+                SELECT montant, flag_montant_eleve
+                FROM transactions
+                ORDER BY id;
+                """
+            ).fetchall()
+
+            totaux = connexion.execute(
+                """
+                SELECT
+                    (SELECT SUM(montant_total)
+                     FROM totaux_iban_origine),
+                    (SELECT SUM(montant_total)
+                     FROM totaux_banque_source),
+                    (SELECT SUM(montant_total)
+                     FROM totaux_iban_destinataire);
+                """
+            ).fetchone()
+
+            nombre_fichiers = connexion.execute(
+                "SELECT COUNT(*) FROM processed_files;"
+            ).fetchone()[0]
+
+        assert lignes == [
+            (Decimal("4999.99"), False),
+            (Decimal("5000.00"), False),
+            (Decimal("5000.01"), True),
+        ]
+
+        assert totaux == (
+            Decimal("15000.00"),
+            Decimal("15000.00"),
+            Decimal("15000.00"),
+        )
+
+        assert nombre_fichiers == 1
+
+    finally:
+        client.delete_object(
+            Bucket=bucket_test,
+            Key=fichier.name,
+        )
+        client.delete_bucket(Bucket=bucket_test)

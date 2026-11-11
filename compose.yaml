@@ -4,7 +4,6 @@ services:
     environment:
       POSTGRES_DB: transactions
       POSTGRES_USER: pipeline
-      # Identifiant de démonstration pour la base locale du projet.
       POSTGRES_PASSWORD: pipeline_local
     ports:
       - "127.0.0.1:5432:5432"
@@ -17,5 +16,17 @@ services:
       retries: 10
       start_period: 10s
 
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.53
+    environment:
+      AWS_ACCESS_KEY_ID: pipeline
+      AWS_SECRET_ACCESS_KEY: pipeline_s3_local
+      S3_BUCKET: transactions-csv
+    ports:
+      - "127.0.0.1:8333:8333"
+    volumes:
+      - seaweedfs_data:/data
+
 volumes:
   postgres_data:
+  seaweedfs_data:

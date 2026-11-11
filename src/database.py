@@ -4,7 +4,7 @@ from pathlib import Path
 
 import psycopg
 
-from src.load_data import charger_csv
+from src.load_data import charger_contenu_csv
 from src.process_data import (
     ajouter_flags,
     total_par_iban_origine,
@@ -68,14 +68,16 @@ def inserer_totaux(curseur, empreinte, transactions):
     )
 
 
-def inserer_fichier(chemin, nom_base="transactions"):
-    """Insère un fichier et ses totaux, sans doublon."""
-    chemin = Path(chemin)
-    empreinte = hashlib.sha256(chemin.read_bytes()).hexdigest()
+def inserer_contenu_csv(
+    contenu,
+    nom_fichier,
+    nom_base="transactions",
+):
+    """Insère des octets CSV et leurs totaux, sans doublon."""
+    empreinte = hashlib.sha256(contenu).hexdigest()
 
     with connecter(nom_base) as connexion:
         with connexion.cursor() as curseur:
-            # Réserve l'empreinte dans la transaction SQL en cours.
             curseur.execute(
                 """
                 INSERT INTO processed_files (file_hash, nom_fichier)
@@ -83,17 +85,15 @@ def inserer_fichier(chemin, nom_base="transactions"):
                 ON CONFLICT (file_hash) DO NOTHING
                 RETURNING file_hash;
                 """,
-                (empreinte, chemin.name),
+                (empreinte, nom_fichier),
             )
 
-            # Une empreinte déjà présente signifie : fichier déjà importé.
             if curseur.fetchone() is None:
                 return 0
 
-            transactions = charger_csv(chemin)
+            transactions = charger_contenu_csv(contenu)
             transactions_traitees = ajouter_flags(transactions)
 
-            # Enregistre les transactions avec leurs flags.
             curseur.executemany(
                 """
                 INSERT INTO transactions (
@@ -120,11 +120,21 @@ def inserer_fichier(chemin, nom_base="transactions"):
                 transactions_traitees,
             )
 
-            # Enregistre les totaux dans la même transaction SQL.
             inserer_totaux(curseur, empreinte, transactions)
 
-    # La sortie réussie du bloc de connexion confirme les insertions.
     return len(transactions_traitees)
+
+
+def inserer_fichier(chemin, nom_base="transactions"):
+    """Lit un fichier local puis délègue son insertion."""
+    chemin = Path(chemin)
+    contenu = chemin.read_bytes()
+
+    return inserer_contenu_csv(
+        contenu=contenu,
+        nom_fichier=chemin.name,
+        nom_base=nom_base,
+    )
 
 
 def inserer_avec_retry(
@@ -133,7 +143,7 @@ def inserer_avec_retry(
     max_tentatives=3,
     delai=2,
 ):
-    """Réessaie l'insertion après une erreur opérationnelle."""
+    """Réessaie l'insertion locale après une erreur opérationnelle."""
     if max_tentatives < 1:
         raise ValueError("Il faut au moins une tentative.")
 

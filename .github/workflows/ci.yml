@@ -30,6 +30,15 @@ jobs:
           --health-timeout 3s
           --health-retries 10
 
+      seaweedfs:
+        image: chrislusf/seaweedfs:4.53
+        env:
+          AWS_ACCESS_KEY_ID: pipeline
+          AWS_SECRET_ACCESS_KEY: pipeline_s3_local
+          S3_BUCKET: transactions-csv
+        ports:
+          - 8333:8333
+
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v7
@@ -41,6 +50,16 @@ jobs:
 
       - name: Installer les dépendances
         run: python -m pip install -r requirements.txt
+
+      - name: Attendre le stockage S3
+        run: |
+          python - <<'PY'
+          from src.pipeline import attendre_s3
+          from src.s3_storage import creer_client_s3
+
+          attendre_s3(creer_client_s3())
+          print("Le bucket S3 est accessible.")
+          PY
 
       - name: Créer les tables de test
         run: |
